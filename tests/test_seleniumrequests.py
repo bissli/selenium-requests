@@ -7,10 +7,10 @@ import requests
 import http.server
 import http.cookies
 
-from seleniumrequests import Firefox, Chrome, Ie, Edge, Opera, Safari, BlackBerry, PhantomJS, Android, Remote
+from seleniumrequests import Firefox, Chrome, Ie, Edge, Opera, Safari, Remote
 from seleniumrequests.request import get_unused_port
 
-WEBDRIVER_CLASSES = Firefox, Chrome, Ie, Edge, Opera, Safari, BlackBerry, PhantomJS, Android, Remote
+WEBDRIVER_CLASSES = Firefox, Chrome, Ie, Edge, Opera, Safari
 
 
 class DummyRequestHandler(http.server.BaseHTTPRequestHandler):

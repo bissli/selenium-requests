@@ -145,15 +145,13 @@ class RequestsSessionMixin(object):
         self.requests_session = requests.Session()
 
         self.__has_webdriver_request_headers = False
-        self.__is_phantomjs = self.name == "phantomjs"
-        self.__is_phantomjs_211 = self.__is_phantomjs and self.capabilities["version"] == "2.1.1"
 
-    # Workaround for PhantomJS bug: https://github.com/ariya/phantomjs/issues/14047
     def add_cookie(self, cookie_dict):
         try:
             super(RequestsSessionMixin, self).add_cookie(cookie_dict)
         except WebDriverException as exception:
-            if not (self.__is_phantomjs_211 and exception.msg == "Unable to set Cookie"):
+            details = json.loads(exception.msg)
+            if details['errorMessage'] == 'Unable to set Cookie':
                 raise
 
     def request(self, method, url, **kwargs):
