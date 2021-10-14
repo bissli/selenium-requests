@@ -1,124 +1,114 @@
+import os
 import json
-import socket
-import threading
+import sys
 
 import pytest
 import requests
 import http.server
 import http.cookies
 
+from selenium import webdriver
 from seleniumrequests import Firefox, Chrome, Ie, Edge, Opera, Safari, Remote
-from seleniumrequests.request import get_unused_port
+from seleniumrequests.request import run_http_server
+
+from webdriver_manager.chrome import ChromeDriverManager
+
+import logging
+logger = logging.getLogger(__name__)
+
 
 WEBDRIVER_CLASSES = Firefox, Chrome, Ie, Edge, Opera, Safari
 
 
-class DummyRequestHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write("<html></html>".encode("utf-8"))
-
-    # Suppress unwanted logging to stderr
-    def log_message(self, format, *args):
-        pass
-
-
-class EchoHeaderRequestHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        # Python 2's HTTPMessage class contains the actual data in its
-        # "dict"-attribute, whereas in Python 3 HTTPMessage is itself the
-        # container. Treat headers as case-insensitive
-        data = json.dumps(dict(self.headers))
-        self.send_response(200)
-
-        # Send JSON data in a header instead of the body field, because some
-        # browsers add additional markup which is ugly to parse out
-        self.send_header("echo", data)
-        self.end_headers()
-
-        # This is needed so the WebDriver instance allows setting of cookies
-        self.wfile.write("<html></html>".encode("utf-8"))
-
-    # Suppress unwanted logging to stderr
-    def log_message(self, format, *args):
-        pass
-
-
-class SetCookieRequestHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        if "set-cookie" in self.headers:
-            self.send_header("set-cookie", "some=cookie")
-        self.end_headers()
-
-        # This is needed so the WebDriver instance allows setting of cookies
-        self.wfile.write("<html></html>".encode("utf-8"))
-
-    # Suppress unwanted logging to stderr
-    def log_message(self, format, *args):
-        pass
-
-
-def run_http_server(request_handler_class):
-    while True:
-        port = get_unused_port()
-        try:
-            server = http.server.HTTPServer(("", port), request_handler_class)
-            break
-        except socket.error:
+@pytest.fixture(scope='function')
+def dummy_server(request):
+    class DummyRequestHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write("<html></html>".encode("utf-8"))
+        def log_message(self, format, *args):
             pass
-
-    def run():
-        while True:
-            server.handle_request()
-
-    thread = threading.Thread(target=run)
-    thread.daemon = True
-    thread.start()
-
-    return "http://127.0.0.1:%d/" % port
+    dummy_server = run_http_server(DummyRequestHandler)
+    return dummy_server
 
 
-dummy_server = run_http_server(DummyRequestHandler)
-echo_header_server = run_http_server(EchoHeaderRequestHandler)
-set_cookie_server = run_http_server(SetCookieRequestHandler)
+@pytest.fixture(scope='function')
+def echo_header_server(request):
+    class EchoHeaderRequestHandler(http.server.BaseHTTPRequestHandler):
+        """Server returns header with echo=data
+        """
+        def do_GET(self):
+            data = json.dumps(dict(self.headers))
+            self.send_response(200)
+            self.send_header("echo", data)
+            self.end_headers()
+            self.wfile.write("<html></html>".encode("utf-8"))
+        def log_message(self, format, *args):
+            http.server.BaseHTTPRequestHandler.log_message(self, format, *args)
+    echo_header_server = run_http_server(EchoHeaderRequestHandler)
+    return echo_header_server
+
+
+@pytest.fixture(scope='function')
+def set_cookie_server(request):
+    class SetCookieRequestHandler(http.server.BaseHTTPRequestHandler):
+        """Server returns some=cookie cookie in the response
+        """
+        def do_GET(self):
+            self.send_response(200)
+            if "set-cookie" in self.headers:
+                self.send_header("set-cookie", "some=cookie")
+            self.end_headers()
+            self.wfile.write("<html></html>".encode("utf-8"))
+        def log_message(self, format, *args):
+            pass
+    set_cookie_server = run_http_server(SetCookieRequestHandler)
+    return set_cookie_server
 
 
 def instantiate_webdriver(webdriver_class):
+    logger.info(f"Instanting {webdriver_class}")
     try:
+        if webdriver_class == Chrome:
+            options = webdriver.ChromeOptions()
+            options.add_argument('--headless')
+            return webdriver_class(ChromeDriverManager().install(), chrome_options=options)
         return webdriver_class()
-    # Selenium raises Exception directly in some WebDriver classes...
     except Exception:
         pytest.skip("WebDriver not available")
 
 
 def make_window_handling_test(webdriver_class):
-    def test_window_handling():
+
+    def test_window_handling(dummy_server):
+        """Test that on making a request we remain on original window handle
+        """
+        logger.info(f"Running 'make_window_handling_test' for {webdriver_class}")
         webdriver = instantiate_webdriver(webdriver_class)
+
         webdriver.get(dummy_server)
         original_window_handle = webdriver.current_window_handle
-        webdriver.execute_script("window.open('%s', '_blank');" % dummy_server)
-        original_window_handles = set(webdriver.window_handles)
-        # We need a different domain here to test the correct behaviour. Using
-        # localhost isn't fool-proof because the hosts file is editable, so
-        # make the most reliable choice we can: Google
-        webdriver.request("GET", "https://www.google.com/")
+        webdriver.execute_script(f"window.open('{dummy_server}', '_blank');")
+        logger.info(f"Opened blank window {dummy_server}")
 
-        # Make sure that the window handle was switched back to the original
-        # one after making a request that caused a new window to open
+        original_window_handles = set(webdriver.window_handles)
+        webdriver.get_request("https://www.google.com/")
+
         assert webdriver.current_window_handle == original_window_handle
-        # Make sure that all additional window handles that were opened during
-        # the request were closed again
-        assert set(webdriver.window_handles) == original_window_handles
+        assert set(webdriver.window_handles) == original_window_handles # no additional windows opened
 
         webdriver.quit()
+        logger.info(f"Quit webdriver")
 
     return test_window_handling
 
 
 def make_headers_test(webdriver_class):
-    def test_headers():
+
+    def test_headers(echo_header_server):
+        logger.info(f"Running 'make_headers_test' for {webdriver_class}")
+
         webdriver = instantiate_webdriver(webdriver_class)
         # TODO: Add more cookie examples with additional fields, such as
         # expires, path, comment, max-age, secure, version, httponly
@@ -126,14 +116,13 @@ def make_headers_test(webdriver_class):
             {"domain": "127.0.0.1", "name": "hello", "value": "world"},
             {"domain": "127.0.0.1", "name": "another", "value": "cookie"},
         )
-        # Open the server URL with the WebDriver instance initially so we can
-        # set custom cookies
-        webdriver.get(echo_header_server)
+        webdriver.get(echo_header_server) # open page prior to setting cookies
         for cookie in cookies:
+            logger.info(f"Added {cookie}")
             webdriver.add_cookie(cookie)
-        response = webdriver.request(
-            "GET", echo_header_server, headers={"extra": "header"}, cookies={"extra": "cookie"}
-        )
+        logger.info(f"Requesting {echo_header_server} with extra cookies")
+        response = webdriver.get_request(echo_header_server, headers={"extra": "header"}, cookies={"extra": "cookie"})
+        logger.info(f"Got response")
         sent_headers = requests.structures.CaseInsensitiveDict(json.loads(response.headers["echo"]))
 
         # Simply assert that the User-Agent isn't requests' default one, which
@@ -155,12 +144,15 @@ def make_headers_test(webdriver_class):
 
 
 def make_cookie_test(webdriver_class):
-    def test_cookies():
+
+    def test_cookies(set_cookie_server):
+        logger.info(f"Running 'make_cookie_test' for {webdriver_class}")
+
         webdriver = instantiate_webdriver(webdriver_class)
         # Make sure that the WebDriver itself doesn't receive the Set-Cookie
         # header, instead the requests request should receive it and set it
         # manually within the WebDriver instance.
-        webdriver.request("GET", set_cookie_server, headers={"set-cookie": ""})
+        webdriver.get_request(set_cookie_server, headers={"set-cookie": ""})
         # Open the URL so that we can actually get the cookies
         webdriver.get(set_cookie_server)
 
@@ -178,6 +170,6 @@ def make_cookie_test(webdriver_class):
 
 for webdriver_class in WEBDRIVER_CLASSES:
     name = webdriver_class.__name__.lower()
-    globals()["test_%s_window_handling" % name] = make_window_handling_test(webdriver_class)
-    globals()["test_%s_headers" % name] = make_headers_test(webdriver_class)
-    globals()["test_%s_set_cookie" % name] = make_cookie_test(webdriver_class)
+    globals()[f"test_{name}_window_handling"] = make_window_handling_test(webdriver_class)
+    globals()[f"test_{name}_set_cookie"] = make_cookie_test(webdriver_class)
+    globals()[f"test_{name}_headers"] = make_headers_test(webdriver_class)
