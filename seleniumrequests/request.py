@@ -99,17 +99,38 @@ def run_http_server(request_handler_class):
     return f"http://127.0.0.1:{port:d}"
 
 
-    UPDATER_HEADERS_MUTEX.acquire()
-    # XXX: .shutdown() seems to block indefinitely and not shut down the server
-    # server.shutdown()
+def get_webdriver_request_headers(webdriver):
 
-    # Not optional: Make sure that the webdriver didn't switch the window handle to the newly opened window. Behaviors
-    # of different webdrivers seem to differ here. Workaround for Firefox: If a new window is opened via JavaScript as a
-    # new tab, requesting self.current_url never returns. Explicitly switching to the current window handle again seems
-    # to fix this issue.
-    webdriver.switch_to.window(original_window_handle)
+    address = run_http_server(_HTTPRequestHandler)
+    original_window_handle = webdriver.current_window_handle
+    current_handles = webdriver.window_handles
+
+    def get_headers():
+        """Timing issue with HTTPRequestHander loading on the thread;
+        open two windows to capture headers
+        """
+        load = f"""
+            window.open('{address}', '_blank');
+            window.open('{address}', '_blank');
+        """
+        webdriver.execute_script(load)
+        time.sleep(0.5)
+        new_handles = webdriver.window_handles
+        for handle in new_handles:
+            if handle not in current_handles:
+                webdriver.switch_to.window(handle)
+                webdriver.close()
 
     global HEADERS
+    while not HEADERS:
+        try:
+            get_headers()
+        except NoSuchWindowException:
+            logger.error("Unable to acquire webdriver resources for scrape. Exiting.")
+            raise SeleniumRequestsException()
+
+    UPDATER_HEADERS_MUTEX.acquire()
+    webdriver.switch_to.window(original_window_handle) # NOT optional
     headers = HEADERS
     HEADERS = None
 
