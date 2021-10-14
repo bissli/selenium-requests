@@ -1,13 +1,30 @@
+"""Wrapper for Selenium (modified version of seleniumrequests)
+
+The module spawns a simple HTTP server to copy and later emulate the
+request headers that are sent by the browser controlled by the WebDriver. This
+is done so that manual HTTP requests can be made with another library that look
+similar or identical to those that would have been sent by the browser. Since this
+process simply needs to open a new window and navigate to the localhost URL for
+less than a second, the window can be immediately closed again. This immediate
+closing is handled by JavaScript in the HTML of the opened page, which simply
+calls window.close() as soon as the page has loaded.
+"""
 import socket
 import threading
 import warnings
 import http.server
 import urllib.parse
 import time
+import json
 
 import requests
 import tldextract
+
 from selenium.common.exceptions import NoSuchWindowException, WebDriverException
+
+import logging
+logger = logging.getLogger(__name__)
+
 
 FIND_WINDOW_HANDLE_WARNING = (
     "Created window handle could not be found reliably. Using less reliable "
@@ -24,9 +41,11 @@ class SeleniumRequestsException(Exception):
     pass
 
 
-# Using a global value to pass around the headers dictionary reference seems to be the easiest way to get access to it,
-# since the HTTPServer doesn't keep an object of the instance of the HTTPRequestHandler
-class HTTPRequestHandler(http.server.BaseHTTPRequestHandler):
+class _HTTPRequestHandler(http.server.BaseHTTPRequestHandler):
+    """Using a global value to pass around the headers dictionary reference seems
+    to be the easiest way to get access to it, since the HTTPServer doesn't keep
+    an object of the instance of the HTTPRequestHandler
+    """
     def do_GET(self):
         global HEADERS
         HEADERS = requests.structures.CaseInsensitiveDict(self.headers)
@@ -34,36 +53,51 @@ class HTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
         self.send_response(200)
         self.end_headers()
-        # Immediately close the window as soon as it is loaded
         self.wfile.write('<script type="text/javascript">window.close();</script>'.encode("utf-8"))
 
-    # Suppress unwanted logging to stderr
     def log_message(self, format, *args):
-        pass
+        """Log an arbitrary message and prepend the given thread name."""
+        logger.debug("[ {} ] {} - [{}] {}".format(
+            threading.current_thread().name,
+            self.address_string(),
+            self.log_date_time_string(),
+            format%args))
 
 
-def get_unused_port():
-    socket_ = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    socket_.bind(("", 0))
-    address, port = socket_.getsockname()
-    socket_.close()
-    return port
-
-
-def get_webdriver_request_headers(webdriver):
-    # There's a small chance that the port was taken since the call of get_unused_port(), so make sure we try as often
-    # as needed
-    while True:
+def run_http_server(request_handler_class):
+    """
+    >>> address = run_http_server(_HTTPRequestHandler)
+    >>> print("Address:", address) # doctest:+ELLIPSIS
+    Address: http://127.0.0.1:...
+    >>> print("Getting URL:", address) # doctest:+ELLIPSIS
+    Getting URL: http://127.0.0.1:...
+    >>> with requests.get(address) as f:
+    ...     print("Code:", f.status_code)
+    Code: 200
+    """
+    def get_unused_port():
+        socket_ = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        socket_.bind(("", 0))
+        address, port = socket_.getsockname()
+        socket_.close()
+        return port
+    while True: # loop until bind port
         port = get_unused_port()
         try:
-            server = http.server.HTTPServer(("", port), HTTPRequestHandler)
+            httpd = http.server.HTTPServer(("", port), request_handler_class)
             break
         except socket.error:
             pass
+    def serve_forever(httpd):
+        with httpd:
+            httpd.serve_forever()
+    httpd.timeout = 10
+    thread = threading.Thread(target=serve_forever, args=(httpd,))
+    thread.daemon = True
+    thread.start()
+    logger.info(f"started HTTP sever on port {port}")
+    return f"http://127.0.0.1:{port:d}"
 
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    original_window_handle = webdriver.current_window_handle
-    webdriver.execute_script("window.open('http://127.0.0.1:%d/', '_blank');" % port)
 
     UPDATER_HEADERS_MUTEX.acquire()
     # XXX: .shutdown() seems to block indefinitely and not shut down the server
@@ -89,6 +123,17 @@ def prepare_requests_cookies(webdriver_cookies):
 
 
 def get_tld(url):
+    """Top level domain getter, handle unknown domains
+
+    >>> get_tld('http://127.0.0.1:9222/')
+    '127.0.0.1'
+    >>> get_tld('http://domain.onion/')
+    'domain.onion'
+    >>> get_tld('http://www.google.com/')
+    'google.com'
+    >>> get_tld('http://www.forum.bbc.co.uk/')
+    'bbc.co.uk'
+    """
     components = tldextract.extract(url)
     # Since the registered domain could not be extracted, assume that it's simply an IP and strip away the protocol
     # prefix and potentially trailing rest after "/" away. If it isn't, this fails gracefully for unknown domains, e.g.:
@@ -104,6 +149,9 @@ def get_tld(url):
 
 
 def find_window_handle(webdriver, predicate):
+    """Looking for previously used window handle if one exists. Start with
+    current active handle and work backwards.
+    """
     original_window_handle = webdriver.current_window_handle
     if predicate(webdriver):
         return original_window_handle
@@ -118,7 +166,7 @@ def find_window_handle(webdriver, predicate):
         # to switch to it, in which case it can be silently ignored.
         try:
             webdriver.switch_to.window(window_handle)
-        except NoSuchWindowException:
+        except NoSuchWindowException: # handle closed during iteration
             continue
 
         if predicate(webdriver):
@@ -133,22 +181,22 @@ def make_match_domain_predicate(domain):
         try:
             return get_tld(webdriver.current_url) == domain
         # This exception can occur if the current window handle was closed
-        except NoSuchWindowException:
+        except NoSuchWindowException: # in case handle becomes closed
             pass
 
     return predicate
 
 
-class RequestsSessionMixin(object):
-    def __init__(self, *args, **kwargs):
-        super(RequestsSessionMixin, self).__init__(*args, **kwargs)
-        self.requests_session = requests.Session()
+class RequestsSessionMixin:
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.requests_session = requests.Session()
         self.__has_webdriver_request_headers = False
 
     def add_cookie(self, cookie_dict):
         try:
-            super(RequestsSessionMixin, self).add_cookie(cookie_dict)
+            super().add_cookie(cookie_dict)
         except WebDriverException as exception:
             details = json.loads(exception.msg)
             if details['errorMessage'] == 'Unable to set Cookie':
@@ -189,14 +237,14 @@ class RequestsSessionMixin(object):
             if not window_handle:
                 previous_window_handles = set(self.window_handles)
                 components = urllib.parse.urlsplit(url)
-                self.execute_script("window.open('%s://%s/', '_blank');" % (components.scheme, components.netloc))
+                self.execute_script(f"window.open('{components.scheme}://{components.netloc}/', '_blank');")
                 difference = set(self.window_handles) - previous_window_handles
 
                 if len(difference) == 1:
                     opened_window_handle = difference.pop()
                     self.switch_to.window(opened_window_handle)
                 else:
-                    warnings.warn(FIND_WINDOW_HANDLE_WARNING)
+                    logger.warning(FIND_WINDOW_HANDLE_WARNING)
                     opened_window_handle = find_window_handle(self, predicate)
 
                     # Window handle could not be found during first pass. There might have been a redirect and the top-
@@ -221,6 +269,8 @@ class RequestsSessionMixin(object):
         # Set cookies received from the HTTP response in the WebDriver
         current_tld = get_tld(self.current_url)
         for cookie in response.cookies:
+            # Setting domain to None automatically instructs most webdrivers to use the domain of the current window
+            # handle
             cookie_dict = {"domain": cookie.domain, "name": cookie.name, "value": cookie.value, "secure": cookie.secure}
             if cookie.expires:
                 cookie_dict["expiry"] = cookie.expires
@@ -241,3 +291,8 @@ class RequestsSessionMixin(object):
 
 # backwards-compatibility
 RequestMixin = RequestsSessionMixin
+
+
+if __name__ == '__main__':
+    import doctest
+    doctest.testmod()
