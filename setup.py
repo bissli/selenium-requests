@@ -17,7 +17,17 @@ setup(
     author_email="cryzed@googlemail.com",
     url="https://github.com/cryzed/Selenium-Requests",
     packages=("seleniumrequests",),
-    install_requires=("requests", "selenium", "tldextract"),
+    install_requires=(
+        "requests",
+        "selenium>=3.141.0,<4.0.0",
+        "tldextract"
+        ),
+    extras = {
+        'test': [
+            'webdriver-manager',
+            'pytest'
+            ]
+        },
     license="MIT",
     zip_safe=False,
     classifiers=[
