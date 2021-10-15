@@ -11,7 +11,7 @@ Features
  * Manages cookies bidirectionally between requests and Selenium
  * Switches to already existing window handles or temporarily creates them to work with the webdriver's cookies when making a request
  * All operations preserve the original state of the WebDriver (active window handle and window handles)
- * Tested to work with Selenium (3.0.1) using Mozilla Firefox (49.0.2), Google Chrome (54.0.2840.71) and PhantomJS (2.1.1)
+ * Tested to work with Selenium (3.1.141) using Mozilla Firefox (49.0.2), Google Chrome (75.0.3770.0)
 
 
 Usage
@@ -40,8 +40,3 @@ custom_webdriver = MyCustomWebDriver()
 response = custom_webdriver.request('GET', 'https://www.google.com/')
 print(response)
 ```
-
-
-Installation
-------------
-```pip install selenium-requests```
