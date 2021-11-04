@@ -9,7 +9,6 @@ less than a second, the window can be immediately closed again. This immediate
 closing is handled by JavaScript in the HTML of the opened page, which simply
 calls window.close() as soon as the page has loaded.
 """
-import socket
 import threading
 import warnings
 import http.server
@@ -21,6 +20,7 @@ import requests
 import tldextract
 
 from selenium.common.exceptions import NoSuchWindowException, WebDriverException
+from selenium.webdriver.common.utils import free_port
 
 import logging
 logger = logging.getLogger(__name__)
@@ -75,18 +75,12 @@ def run_http_server(request_handler_class):
     ...     print("Code:", f.status_code)
     Code: 200
     """
-    def get_unused_port():
-        socket_ = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        socket_.bind(("", 0))
-        address, port = socket_.getsockname()
-        socket_.close()
-        return port
     while True: # loop until bind port
-        port = get_unused_port()
+        port = free_port()
         try:
             httpd = http.server.HTTPServer(("", port), request_handler_class)
             break
-        except socket.error:
+        except OSError:
             pass
     def serve_forever(httpd):
         with httpd:
