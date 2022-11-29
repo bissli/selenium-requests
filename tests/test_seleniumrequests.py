@@ -8,7 +8,7 @@ import http.server
 import http.cookies
 
 from selenium import webdriver
-from seleniumrequests import Firefox, Chrome, Ie, Edge, Opera, Safari, Remote
+from seleniumrequests import Firefox, Chrome, Remote
 from seleniumrequests.request import run_http_server
 from selenium.webdriver.chrome.service import Service as ChromeService
 
@@ -18,7 +18,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-WEBDRIVER_CLASSES = Firefox, Chrome, Ie, Edge, Opera, Safari
+WEBDRIVER_CLASSES = Chrome, Firefox
 
 
 @pytest.fixture(scope='function')
@@ -101,7 +101,7 @@ def make_window_handling_test(webdriver_class):
         logger.info(f"Opened blank window {dummy_server}")
 
         original_window_handles = set(webdriver.window_handles)
-        webdriver.get_request("https://www.google.com/")
+        webdriver.request("GET", "https://www.google.com/")
 
         assert webdriver.current_window_handle == original_window_handle
         assert set(webdriver.window_handles) == original_window_handles # no additional windows opened
@@ -129,7 +129,7 @@ def make_headers_test(webdriver_class):
             logger.info(f"Added {cookie}")
             webdriver.add_cookie(cookie)
         logger.info(f"Requesting {echo_header_server} with extra cookies")
-        response = webdriver.get_request(echo_header_server, headers={"extra": "header"}, cookies={"extra": "cookie"})
+        response = webdriver.request("GET", echo_header_server, headers={"extra": "header"}, cookies={"extra": "cookie"})
         logger.info(f"Got response")
         sent_headers = requests.structures.CaseInsensitiveDict(json.loads(response.headers["echo"]))
 
@@ -160,7 +160,7 @@ def make_cookie_test(webdriver_class):
         # Make sure that the WebDriver itself doesn't receive the Set-Cookie
         # header, instead the requests request should receive it and set it
         # manually within the WebDriver instance.
-        webdriver.get_request(set_cookie_server, headers={"set-cookie": ""})
+        webdriver.request("GET", set_cookie_server, headers={"set-cookie": ""})
         # Open the URL so that we can actually get the cookies
         webdriver.get(set_cookie_server)
 
