@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "selenium-requests"
+version = "0.1.0"
+description = "Fork of selenium-request with added features"
+repository="https://github.com/bissli/selenium-requests"
+authors = ["bissli <bissli@xyz.com>"]
+license = "MIT"
+packages = [{include = "seleniumrequests"}]
+
+[tool.poetry.dependencies]
+python = "~3"
+requests = "^2.27.0"
+selenium = "^4.6.0"
+smart-webdriver-manager = "^0.3.0"
+tldextract = "^3.1.2"
+
+[tool.poetry.dev-dependencies]
+pytest = "^6"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
