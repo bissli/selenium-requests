@@ -10,8 +10,9 @@ import http.cookies
 from selenium import webdriver
 from seleniumrequests import Firefox, Chrome, Ie, Edge, Opera, Safari, Remote
 from seleniumrequests.request import run_http_server
+from selenium.webdriver.chrome.service import Service as ChromeService
 
-from webdriver_manager.chrome import ChromeDriverManager
+from smart_webdriver_manager import ChromeDriverManager
 
 import logging
 logger = logging.getLogger(__name__)
@@ -71,11 +72,18 @@ def instantiate_webdriver(webdriver_class):
     logger.info(f"Instanting {webdriver_class}")
     try:
         if webdriver_class == Chrome:
+            cdm = ChromeDriverManager(100)
             options = webdriver.ChromeOptions()
+            options.binary_location = cdm.get_browser()
             options.add_argument('--headless')
-            return webdriver_class(ChromeDriverManager().install(), chrome_options=options)
-        return webdriver_class()
-    except Exception:
+            options.add_argument(f'--user-data-dir={cdm.get_browser_user_data()}')
+            service = ChromeService(executable_path=executable_path)
+            return webdriver_class(service=service, chrome_options=options)
+        if webdriver_class == Firefox:
+            options = webdriver.FirefoxOptions()
+            options.add_argument('--headless')
+            return webdriver_class(options=options)
+    except Exception as exc:
         pytest.skip("WebDriver not available")
 
 
