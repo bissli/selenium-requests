@@ -17,8 +17,7 @@ from smart_webdriver_manager import ChromeDriverManager
 import logging
 logger = logging.getLogger(__name__)
 
-
-WEBDRIVER_CLASSES = Chrome, Firefox
+WEBDRIVER_CLASSES = [(Chrome, [95, 100, 106, 113]), (Firefox, ['*'])]
 
 
 @pytest.fixture(scope='function')
@@ -68,32 +67,31 @@ def set_cookie_server(request):
     return set_cookie_server
 
 
-def instantiate_webdriver(webdriver_class):
-    logger.info(f"Instanting {webdriver_class}")
-    try:
-        if webdriver_class == Chrome:
-            cdm = ChromeDriverManager(100)
-            options = webdriver.ChromeOptions()
-            options.binary_location = cdm.get_browser()
-            options.add_argument('--headless')
-            options.add_argument(f'--user-data-dir={cdm.get_browser_user_data()}')
-            service = ChromeService(executable_path=executable_path)
-            return webdriver_class(service=service, chrome_options=options)
-        if webdriver_class == Firefox:
+def instantiate_webdriver(webdriver_class, version):
+    logger.info(f'Instanting {webdriver_class}')
+    if webdriver_class == Chrome:
+        cdm = ChromeDriverManager(version)
+        options = webdriver.ChromeOptions()
+        options.binary_location = cdm.get_browser()
+        options.add_argument('--headless')
+        options.add_argument(f'--user-data-dir={cdm.get_browser_user_data()}')
+        service = ChromeService(executable_path=cdm.get_driver())
+        return webdriver_class(service=service, options=options)
+    if webdriver_class == Firefox:
+        try:
             options = webdriver.FirefoxOptions()
             options.add_argument('--headless')
             return webdriver_class(options=options)
-    except Exception as exc:
-        pytest.skip("WebDriver not available")
+        except Exception as exc:
+            pytest.skip('WebDriver not available')
 
 
-def make_window_handling_test(webdriver_class):
-
+def make_window_handling_test(webdriver_class, version):
     def test_window_handling(dummy_server):
         """Test that on making a request we remain on original window handle
         """
-        logger.info(f"Running 'make_window_handling_test' for {webdriver_class}")
-        webdriver = instantiate_webdriver(webdriver_class)
+        logger.info(f"Running 'make_window_handling_test' for {webdriver_class}:{version}")
+        webdriver = instantiate_webdriver(webdriver_class, version)
 
         webdriver.get(dummy_server)
         original_window_handle = webdriver.current_window_handle
@@ -112,12 +110,11 @@ def make_window_handling_test(webdriver_class):
     return test_window_handling
 
 
-def make_headers_test(webdriver_class):
-
+def make_headers_test(webdriver_class, version):
     def test_headers(echo_header_server):
-        logger.info(f"Running 'make_headers_test' for {webdriver_class}")
+        logger.info(f"Running 'make_headers_test' for {webdriver_class}:{version}")
 
-        webdriver = instantiate_webdriver(webdriver_class)
+        webdriver = instantiate_webdriver(webdriver_class, version)
         # TODO: Add more cookie examples with additional fields, such as
         # expires, path, comment, max-age, secure, version, httponly
         cookies = (
@@ -139,7 +136,6 @@ def make_headers_test(webdriver_class):
         # Check if the additional header was sent as well
         assert "extra" in sent_headers and sent_headers["extra"] == "header"
         cookies = http.cookies.SimpleCookie()
-        # Python 2's Cookie module expects a string object, not Unicode
         cookies.load(sent_headers["cookie"])
         assert "hello" in cookies and cookies["hello"].value == "world"
         assert "another" in cookies and cookies["another"].value == "cookie"
@@ -151,12 +147,11 @@ def make_headers_test(webdriver_class):
     return test_headers
 
 
-def make_cookie_test(webdriver_class):
-
+def make_cookie_test(webdriver_class, version):
     def test_cookies(set_cookie_server):
-        logger.info(f"Running 'make_cookie_test' for {webdriver_class}")
+        logger.info(f"Running 'make_cookie_test' for {webdriver_class}:{version}")
 
-        webdriver = instantiate_webdriver(webdriver_class)
+        webdriver = instantiate_webdriver(webdriver_class, version)
         # Make sure that the WebDriver itself doesn't receive the Set-Cookie
         # header, instead the requests request should receive it and set it
         # manually within the WebDriver instance.
@@ -176,8 +171,9 @@ def make_cookie_test(webdriver_class):
     return test_cookies
 
 
-for webdriver_class in WEBDRIVER_CLASSES:
-    name = webdriver_class.__name__.lower()
-    globals()[f"test_{name}_window_handling"] = make_window_handling_test(webdriver_class)
-    globals()[f"test_{name}_set_cookie"] = make_cookie_test(webdriver_class)
-    globals()[f"test_{name}_headers"] = make_headers_test(webdriver_class)
+for webdriver_class, versions in WEBDRIVER_CLASSES:
+    for version in versions:
+        name = webdriver_class.__name__.lower()
+        globals()[f"test_{name}_{version}_window_handling"] = make_window_handling_test(webdriver_class, version)
+        globals()[f"test_{name}_{version}_set_cookie"] = make_cookie_test(webdriver_class, version)
+        globals()[f"test_{name}_{version}_headers"] = make_headers_test(webdriver_class, version)

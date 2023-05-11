@@ -213,6 +213,8 @@ class RequestsSessionMixin:
         try:
             super().add_cookie(cookie_dict)
         except WebDriverException as exception:
+            if exception.msg == 'Document is cookie-averse':
+                raise
             details = json.loads(exception.msg)
             if details['errorMessage'] == 'Unable to set Cookie':
                 raise
@@ -282,7 +284,9 @@ class RequestsSessionMixin:
         response = self.requests_session.request(method, url, **kwargs)
 
         # Set cookies received from the HTTP response in the WebDriver
-        current_tld = get_tld(self.current_url)
+        # Bug geckodriver (takes time to update response url,  fix with timeout)
+        while (current_tld := get_tld(self.current_url)) == 'about:blank':
+            time.sleep(0.1)
         for cookie in response.cookies:
             # Setting domain to None automatically instructs most webdrivers to use the domain of the current window
             # handle
