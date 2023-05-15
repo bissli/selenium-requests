@@ -11,7 +11,7 @@ packages = [{include = "seleniumrequests"}]
 python = "~3"
 requests = "^2.27.0"
 selenium = "^4.6.0"
-smart-webdriver-manager = "^0.3.0"
+smart-webdriver-manager = "*"
 tldextract = "^3.1.2"
 
 [tool.poetry.dev-dependencies]
